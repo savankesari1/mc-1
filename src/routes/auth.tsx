@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate, useSearch } from "@tanstack/react-router";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { z } from "zod";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import { Header } from "@/components/site/Header";
 import { Footer } from "@/components/site/Footer";
@@ -10,10 +10,15 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import { lovable } from "@/integrations/lovable/index";
+import { Phone, Mail, ArrowLeft, Loader2 } from "lucide-react";
 
 const emailSchema = z.string().trim().email("Invalid email").max(255);
 const passwordSchema = z.string().min(8, "Min 8 characters").max(72);
 const nameSchema = z.string().trim().min(1).max(100);
+const phoneSchema = z
+  .string()
+  .trim()
+  .regex(/^[6-9]\d{9}$/, "Enter a valid 10-digit Indian mobile number");
 
 const searchSchema = z.object({ next: z.string().optional() });
 
@@ -28,7 +33,219 @@ export const Route = createFileRoute("/auth")({
   component: AuthPage,
 });
 
+// ─── Phone OTP panel ────────────────────────────────────────────────────────
+
+function PhoneAuthPanel({ next }: { next?: string }) {
+  const navigate = useNavigate();
+  const [phone, setPhone] = useState("");
+  const [otp, setOtp] = useState(["", "", "", "", "", ""]);
+  const [step, setStep] = useState<"phone" | "otp">("phone");
+  const [busy, setBusy] = useState(false);
+  const [countdown, setCountdown] = useState(0);
+  const otpRefs = useRef<(HTMLInputElement | null)[]>([]);
+
+  // Countdown timer for resend
+  useEffect(() => {
+    if (countdown <= 0) return;
+    const t = setTimeout(() => setCountdown((c) => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [countdown]);
+
+  async function sendOtp() {
+    const parsed = phoneSchema.safeParse(phone);
+    if (!parsed.success) {
+      toast.error(parsed.error.issues[0].message);
+      return;
+    }
+    setBusy(true);
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        phone: `+91${parsed.data}`,
+      });
+      if (error) throw error;
+      toast.success("OTP sent to +91 " + parsed.data);
+      setStep("otp");
+      setCountdown(30);
+      setTimeout(() => otpRefs.current[0]?.focus(), 100);
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function verifyOtp() {
+    const token = otp.join("");
+    if (token.length !== 6) {
+      toast.error("Enter the complete 6-digit OTP");
+      return;
+    }
+    setBusy(true);
+    try {
+      const { error } = await supabase.auth.verifyOtp({
+        phone: `+91${phone}`,
+        token,
+        type: "sms",
+      });
+      if (error) throw error;
+      toast.success("Signed in successfully!");
+      navigate({ to: (next ?? "/dashboard") as string });
+    } catch (err) {
+      toast.error((err as Error).message);
+      // Clear OTP on failure
+      setOtp(["", "", "", "", "", ""]);
+      setTimeout(() => otpRefs.current[0]?.focus(), 50);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function handleOtpInput(index: number, value: string) {
+    const digit = value.replace(/\D/g, "").slice(-1);
+    const next = [...otp];
+    next[index] = digit;
+    setOtp(next);
+    if (digit && index < 5) {
+      otpRefs.current[index + 1]?.focus();
+    }
+  }
+
+  function handleOtpKeyDown(index: number, e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Backspace" && !otp[index] && index > 0) {
+      otpRefs.current[index - 1]?.focus();
+    }
+  }
+
+  function handleOtpPaste(e: React.ClipboardEvent) {
+    e.preventDefault();
+    const pasted = e.clipboardData.getData("text").replace(/\D/g, "").slice(0, 6);
+    if (!pasted) return;
+    const digits = pasted.split("");
+    const next = [...otp];
+    digits.forEach((d, i) => { if (i < 6) next[i] = d; });
+    setOtp(next);
+    const focusIdx = Math.min(digits.length, 5);
+    otpRefs.current[focusIdx]?.focus();
+  }
+
+  return (
+    <AnimatePresence mode="wait">
+      {step === "phone" ? (
+        <motion.div
+          key="phone-step"
+          initial={{ opacity: 0, x: 20 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: -20 }}
+          transition={{ duration: 0.25 }}
+          className="space-y-4"
+        >
+          <div>
+            <Label htmlFor="phone-number">Mobile number</Label>
+            <div className="mt-1.5 flex rounded-xl overflow-hidden border border-border focus-within:ring-2 focus-within:ring-ring">
+              <span className="flex items-center px-3 bg-muted text-muted-foreground text-sm font-mono border-r border-border select-none">
+                🇮🇳 +91
+              </span>
+              <input
+                id="phone-number"
+                type="tel"
+                inputMode="numeric"
+                placeholder="9876543210"
+                maxLength={10}
+                value={phone}
+                onChange={(e) => setPhone(e.target.value.replace(/\D/g, "").slice(0, 10))}
+                onKeyDown={(e) => e.key === "Enter" && sendOtp()}
+                className="flex-1 h-11 px-3 bg-transparent text-sm outline-none"
+              />
+            </div>
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              We'll send a 6-digit OTP via SMS
+            </p>
+          </div>
+          <Button
+            className="w-full h-11 rounded-full"
+            onClick={sendOtp}
+            disabled={busy || phone.length < 10}
+          >
+            {busy ? (
+              <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Sending…</>
+            ) : (
+              <><Phone className="h-4 w-4 mr-2" /> Send OTP</>
+            )}
+          </Button>
+        </motion.div>
+      ) : (
+        <motion.div
+          key="otp-step"
+          initial={{ opacity: 0, x: 20 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: -20 }}
+          transition={{ duration: 0.25 }}
+          className="space-y-4"
+        >
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <button
+                onClick={() => { setStep("phone"); setOtp(["", "", "", "", "", ""]); }}
+                className="text-muted-foreground hover:text-foreground transition-colors"
+                aria-label="Back"
+              >
+                <ArrowLeft className="h-4 w-4" />
+              </button>
+              <p className="text-sm text-muted-foreground">
+                OTP sent to <span className="text-foreground font-medium">+91 {phone}</span>
+              </p>
+            </div>
+
+            <Label>Enter 6-digit OTP</Label>
+            <div className="mt-2 flex gap-2 justify-between" onPaste={handleOtpPaste}>
+              {otp.map((digit, i) => (
+                <input
+                  key={i}
+                  ref={(el) => { otpRefs.current[i] = el; }}
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={1}
+                  value={digit}
+                  onChange={(e) => handleOtpInput(i, e.target.value)}
+                  onKeyDown={(e) => handleOtpKeyDown(i, e)}
+                  className="w-11 h-12 text-center text-lg font-semibold rounded-xl border border-border bg-surface focus:outline-none focus:ring-2 focus:ring-ring transition-all"
+                />
+              ))}
+            </div>
+          </div>
+
+          <Button
+            className="w-full h-11 rounded-full"
+            onClick={verifyOtp}
+            disabled={busy || otp.join("").length < 6}
+          >
+            {busy ? (
+              <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Verifying…</>
+            ) : (
+              "Verify & Sign in"
+            )}
+          </Button>
+
+          <button
+            type="button"
+            disabled={countdown > 0 || busy}
+            onClick={() => { setOtp(["", "", "", "", "", ""]); setCountdown(30); sendOtp(); }}
+            className="w-full text-center text-sm text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {countdown > 0 ? `Resend OTP in ${countdown}s` : "Didn't get it? Resend OTP"}
+          </button>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+// ─── Main auth page ──────────────────────────────────────────────────────────
+
+type AuthTab = "phone" | "email";
+
 function AuthPage() {
+  const [tab, setTab] = useState<AuthTab>("phone");
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -92,8 +309,6 @@ function AuthPage() {
   async function handleGoogle() {
     setBusy(true);
     const result = await lovable.auth.signInWithOAuth("google", {
-      // Return to this /auth page (keeps ?next=) so the auth listener
-      // can finish the sign-in and forward the user.
       redirect_uri: window.location.href,
     });
     if (result.error) {
@@ -115,18 +330,15 @@ function AuthPage() {
           transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
         >
           <p className="font-mono text-xs uppercase tracking-widest text-muted-foreground">
-            {mode === "signin" ? "Welcome back" : "Get started"}
+            Welcome
           </p>
-          <h1 className="mt-3 text-4xl font-semibold tracking-tighter">
-            {mode === "signin" ? "Sign in" : "Create account"}
-          </h1>
+          <h1 className="mt-3 text-4xl font-semibold tracking-tighter">Sign in</h1>
           <p className="mt-3 text-sm text-muted-foreground">
-            {mode === "signin"
-              ? "Access purchased resources, wishlists, and downloads."
-              : "Join Mahadevi Computers & Education Center."}
+            Access purchased resources, wishlists, and downloads.
           </p>
 
-          <div className="mt-8 space-y-3">
+          <div className="mt-8 space-y-4">
+            {/* Google */}
             <Button
               type="button"
               variant="outline"
@@ -143,38 +355,118 @@ function AuthPage() {
               Continue with Google
             </Button>
 
-            <div className="relative py-2">
-              <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-border" /></div>
-              <div className="relative flex justify-center"><span className="bg-background px-3 text-xs text-muted-foreground">or</span></div>
+            {/* Tab switcher */}
+            <div className="relative py-1">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-border" />
+              </div>
+              <div className="relative flex justify-center">
+                <span className="bg-background px-3 text-xs text-muted-foreground">or continue with</span>
+              </div>
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-3">
-              {mode === "signup" && (
-                <div>
-                  <Label htmlFor="name">Full name</Label>
-                  <Input id="name" value={fullName} onChange={(e) => setFullName(e.target.value)} className="mt-1.5 h-11" required maxLength={100} />
-                </div>
-              )}
-              <div>
-                <Label htmlFor="email">Email</Label>
-                <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="mt-1.5 h-11" required maxLength={255} />
-              </div>
-              <div>
-                <Label htmlFor="password">Password</Label>
-                <Input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="mt-1.5 h-11" required minLength={8} maxLength={72} />
-              </div>
-              <Button type="submit" className="w-full h-11 rounded-full" disabled={busy}>
-                {busy ? "Please wait…" : mode === "signin" ? "Sign in" : "Create account"}
-              </Button>
-            </form>
+            {/* Phone / Email tabs */}
+            <div className="flex rounded-xl border border-border overflow-hidden p-1 gap-1 bg-muted/30">
+              <button
+                type="button"
+                onClick={() => setTab("phone")}
+                className={`flex-1 flex items-center justify-center gap-2 py-2 text-sm font-medium rounded-lg transition-all ${
+                  tab === "phone"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <Phone className="h-3.5 w-3.5" />
+                Mobile OTP
+              </button>
+              <button
+                type="button"
+                onClick={() => setTab("email")}
+                className={`flex-1 flex items-center justify-center gap-2 py-2 text-sm font-medium rounded-lg transition-all ${
+                  tab === "email"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <Mail className="h-3.5 w-3.5" />
+                Email
+              </button>
+            </div>
 
-            <button
-              type="button"
-              className="w-full text-center text-sm text-muted-foreground hover:text-foreground transition-colors pt-2"
-              onClick={() => setMode(mode === "signin" ? "signup" : "signin")}
-            >
-              {mode === "signin" ? "New here? Create an account" : "Already have an account? Sign in"}
-            </button>
+            {/* Tab content */}
+            <AnimatePresence mode="wait">
+              {tab === "phone" ? (
+                <motion.div
+                  key="phone-tab"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ duration: 0.2 }}
+                >
+                  <PhoneAuthPanel next={next} />
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="email-tab"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ duration: 0.2 }}
+                >
+                  <form onSubmit={handleSubmit} className="space-y-3">
+                    {mode === "signup" && (
+                      <div>
+                        <Label htmlFor="name">Full name</Label>
+                        <Input
+                          id="name"
+                          value={fullName}
+                          onChange={(e) => setFullName(e.target.value)}
+                          className="mt-1.5 h-11"
+                          required
+                          maxLength={100}
+                        />
+                      </div>
+                    )}
+                    <div>
+                      <Label htmlFor="email">Email</Label>
+                      <Input
+                        id="email"
+                        type="email"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        className="mt-1.5 h-11"
+                        required
+                        maxLength={255}
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="password">Password</Label>
+                      <Input
+                        id="password"
+                        type="password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        className="mt-1.5 h-11"
+                        required
+                        minLength={8}
+                        maxLength={72}
+                      />
+                    </div>
+                    <Button type="submit" className="w-full h-11 rounded-full" disabled={busy}>
+                      {busy ? "Please wait…" : mode === "signin" ? "Sign in" : "Create account"}
+                    </Button>
+                  </form>
+
+                  <button
+                    type="button"
+                    className="w-full text-center text-sm text-muted-foreground hover:text-foreground transition-colors pt-3"
+                    onClick={() => setMode(mode === "signin" ? "signup" : "signin")}
+                  >
+                    {mode === "signin" ? "New here? Create an account" : "Already have an account? Sign in"}
+                  </button>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </motion.div>
       </main>
