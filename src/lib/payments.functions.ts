@@ -59,8 +59,11 @@ export const createRazorpayOrder = createServerFn({ method: "POST" })
     const keySecret = process.env.RAZORPAY_KEY_SECRET;
     if (!keyId || !keySecret) throw new Error("Razorpay is not configured on the server");
 
+    // Debug: log key prefix so we can confirm live vs test in server logs
+    console.log("[Razorpay] Using key:", keyId.slice(0, 14) + "...");
+
     // Create Razorpay order
-    const auth = btoa(`${keyId}:${keySecret}`);
+    const auth = Buffer.from(`${keyId}:${keySecret}`).toString("base64");
     const res = await fetch("https://api.razorpay.com/v1/orders", {
       method: "POST",
       headers: {
@@ -76,7 +79,7 @@ export const createRazorpayOrder = createServerFn({ method: "POST" })
     });
     if (!res.ok) {
       const text = await res.text();
-      throw new Error(`Razorpay API error: ${text.slice(0, 300)}`);
+      throw new Error(`Razorpay API error (key: ${keyId.slice(0, 14)}...): ${text.slice(0, 300)}`);
     }
     const order = (await res.json()) as { id: string };
 
