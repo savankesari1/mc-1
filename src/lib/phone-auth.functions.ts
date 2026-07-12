@@ -1,23 +1,11 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import { createHash, randomInt } from "crypto";
 
-const BIRD_SMS_URL = "https://eu1.platform.bird.com/v1/sms/messages";
-const OTP_TTL_MINUTES = 10; // Bird template requires ttl as integer 1–999
-
-function hashOtp(code: string): string {
-  return createHash("sha256").update(code).digest("hex");
-}
-
-function generateOtp(): string {
-  return String(randomInt(100000, 999999));
-}
-
-// ─── Step 1: Send OTP ────────────────────────────────────────────────────────
+// ─── Step 1: Send OTP via Twilio Verify ──────────────────────────────────────
 
 /**
- * Generates a 6-digit OTP, stores it (hashed) in phone_otps, and sends it
- * via the Bird "bird_otp_verification_ttl" SMS template.
+ * Triggers a Twilio Verify SMS OTP to the given Indian mobile number.
+ * Twilio generates, stores, and expires the code automatically.
  */
 export const sendPhoneOtp = createServerFn({ method: "POST" })
   .inputValidator((data: { phone: string }) =>
@@ -32,55 +20,34 @@ export const sendPhoneOtp = createServerFn({ method: "POST" })
       .parse(data),
   )
   .handler(async ({ data }) => {
-    const apiKey = process.env.BIRD_API_KEY;
-    if (!apiKey || apiKey === "bk_xxxxxxxxx") {
-      throw new Error("BIRD_API_KEY is not configured on the server.");
+    const accountSid = process.env.TWILIO_ACCOUNT_SID;
+    const authToken = process.env.TWILIO_AUTH_TOKEN;
+    const serviceSid = process.env.TWILIO_VERIFY_SID;
+
+    if (!accountSid || !authToken || authToken === "[AuthToken]" || !serviceSid) {
+      throw new Error(
+        "Twilio is not configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_VERIFY_SID in your .env file.",
+      );
     }
 
-    const e164 = `+91${data.phone}`;
-    const code = generateOtp();
-    const hash = hashOtp(code);
-    const expiresAt = new Date(Date.now() + OTP_TTL_MINUTES * 60 * 1000).toISOString();
+    const { default: twilio } = await import("twilio");
+    const client = twilio(accountSid, authToken);
 
-    // Store hashed OTP in DB (upsert — one row per phone)
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { error: dbErr } = await supabaseAdmin.from("phone_otps").upsert(
-      { phone: e164, otp_hash: hash, expires_at: expiresAt },
-      { onConflict: "phone" },
-    );
-    if (dbErr) throw new Error(`Failed to store OTP: ${dbErr.message}`);
+    const verification = await client.verify.v2
+      .services(serviceSid)
+      .verifications.create({ to: `+91${data.phone}`, channel: "sms" });
 
-    // Send SMS via Bird
-    const res = await fetch(BIRD_SMS_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        to: e164,
-        template: {
-          name: "bird_otp_verification_ttl",
-          parameters: {
-            code,
-            ttl: OTP_TTL_MINUTES, // integer minutes, per Bird API requirement
-          },
-        },
-      }),
-    });
-
-    if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`Bird SMS API error (${res.status}): ${body.slice(0, 200)}`);
+    if (verification.status !== "pending") {
+      throw new Error(`Unexpected Twilio status: ${verification.status}`);
     }
 
     return { ok: true };
   });
 
-// ─── Step 2: Verify OTP + create session ─────────────────────────────────────
+// ─── Step 2: Verify OTP + create Supabase session ────────────────────────────
 
 /**
- * Validates the user-entered OTP against the stored hash.
+ * Checks the OTP with Twilio Verify.
  * On success, finds-or-creates the Supabase user and returns a
  * magic-link token_hash the client can exchange for a real session.
  */
@@ -97,54 +64,45 @@ export const verifyPhoneOtp = createServerFn({ method: "POST" })
       .parse(data),
   )
   .handler(async ({ data }) => {
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const e164 = `+91${data.phone}`;
+    const accountSid = process.env.TWILIO_ACCOUNT_SID;
+    const authToken = process.env.TWILIO_AUTH_TOKEN;
+    const serviceSid = process.env.TWILIO_VERIFY_SID;
 
-    // Fetch the stored challenge
-    const { data: row, error: fetchErr } = await supabaseAdmin
-      .from("phone_otps")
-      .select("otp_hash, expires_at")
-      .eq("phone", e164)
-      .maybeSingle();
-
-    if (fetchErr) throw new Error(`DB error: ${fetchErr.message}`);
-    if (!row) throw new Error("No OTP was sent to this number. Please request a new one.");
-
-    // Check expiry
-    if (new Date(row.expires_at) < new Date()) {
-      await supabaseAdmin.from("phone_otps").delete().eq("phone", e164);
-      throw new Error("OTP expired. Please request a new one.");
+    if (!accountSid || !authToken || authToken === "[AuthToken]" || !serviceSid) {
+      throw new Error("Twilio is not configured on the server.");
     }
 
-    // Check hash
-    if (hashOtp(data.code) !== row.otp_hash) {
+    const { default: twilio } = await import("twilio");
+    const client = twilio(accountSid, authToken);
+
+    const e164 = `+91${data.phone}`;
+
+    // Check code with Twilio Verify
+    const check = await client.verify.v2
+      .services(serviceSid)
+      .verificationChecks.create({ to: e164, code: data.code });
+
+    if (check.status !== "approved") {
       throw new Error("Incorrect OTP. Please try again.");
     }
 
-    // OTP is valid — delete it (one-time use)
-    await supabaseAdmin.from("phone_otps").delete().eq("phone", e164);
-
-    // Find or create a Supabase user tied to this phone.
-    // We use a deterministic "phone email" as the account anchor.
+    // OTP approved — find or create the Supabase user for this phone
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const phoneEmail = `phone_${data.phone}@auth.mahadevi.internal`;
 
     const { data: existingUsers } = await supabaseAdmin.auth.admin.listUsers();
     const existing = existingUsers?.users?.find((u) => u.email === phoneEmail);
 
-    let userId: string;
-    if (existing) {
-      userId = existing.id;
-    } else {
-      const { data: created, error: createErr } = await supabaseAdmin.auth.admin.createUser({
+    if (!existing) {
+      const { error: createErr } = await supabaseAdmin.auth.admin.createUser({
         email: phoneEmail,
         email_confirm: true,
         user_metadata: { phone: e164, auth_method: "phone_otp" },
       });
       if (createErr) throw new Error(`Failed to create account: ${createErr.message}`);
-      userId = created.user.id;
     }
 
-    // Generate a magic-link token the client can exchange for a session
+    // Generate a magic-link token the client exchanges for a real session
     const { data: linkData, error: linkErr } = await supabaseAdmin.auth.admin.generateLink({
       type: "magiclink",
       email: phoneEmail,
@@ -154,5 +112,5 @@ export const verifyPhoneOtp = createServerFn({ method: "POST" })
     const tokenHash = linkData.properties?.hashed_token;
     if (!tokenHash) throw new Error("Session token missing from magic link response.");
 
-    return { ok: true, tokenHash, userId };
+    return { ok: true, tokenHash };
   });
