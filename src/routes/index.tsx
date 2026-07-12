@@ -123,8 +123,8 @@ function Home() {
           </div>
 
           {/* Vignette/Gradient Overlays to blend edges and ensure text readability */}
-          <div className="absolute inset-0 z-[5] bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-transparent via-background/40 to-background/90" />
-          <div className="absolute bottom-0 left-0 right-0 h-40 z-[5] bg-gradient-to-t from-background to-transparent" />
+          <div className="absolute inset-0 z-[5] bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-transparent via-background/40 to-background/90 pointer-events-none" />
+          <div className="absolute bottom-0 left-0 right-0 h-40 z-[5] bg-gradient-to-t from-background to-transparent pointer-events-none" />
 
           <motion.div 
             className="relative z-10 mx-auto max-w-5xl px-6 text-center"
