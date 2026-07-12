@@ -106,19 +106,21 @@ function Home() {
           {/* Interactive Antigravity Background */}
           <div className="absolute inset-0 z-0">
             <Antigravity
-              count={300}
-              magnetRadius={10}
-              ringRadius={10}
-              waveSpeed={0.4}
-              waveAmplitude={1}
-              particleSize={2}
+              count={800}
+              magnetRadius={7}
+              ringRadius={5}
+              waveSpeed={0.6}
+              waveAmplitude={1.6}
+              particleSize={1}
               lerpSpeed={0.1}
-              color="#6366f1"
-              autoAnimate={false}
+              color="#ffffff"
+              autoAnimate={true}
               particleVariance={1}
-              depthFactor={1}
+              rotationSpeed={0}
+              depthFactor={0.5}
+              pulseSpeed={3}
               particleShape="box"
-              fieldStrength={10}
+              fieldStrength={8.2}
             />
           </div>
 
