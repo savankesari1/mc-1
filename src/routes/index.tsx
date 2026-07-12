@@ -4,7 +4,7 @@ import { ArrowRight, Sparkles, Shield, Download, PlayCircle, Code, Terminal, Zap
 
 import { Header } from "@/components/site/Header";
 import { Footer } from "@/components/site/Footer";
-import { Particles } from "@/components/ui/Particles";
+import { Antigravity } from "@/components/ui/Antigravity";
 import { useRef } from "react";
 
 export const Route = createFileRoute("/")({
@@ -97,34 +97,28 @@ const itemVariants = {
 };
 
 function Home() {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const { scrollYProgress } = useScroll({
-    target: containerRef,
-    offset: ["start start", "end start"]
-  });
-  
-  // Parallax effect for the hero section
-  const yParallax = useTransform(scrollYProgress, [0, 1], [0, 200]);
-  const opacityFade = useTransform(scrollYProgress, [0, 0.8], [1, 0]);
-
   return (
     <div className="bg-background relative selection:bg-accent/30 selection:text-accent-foreground">
       <Header />
-      <main ref={containerRef} className="overflow-x-hidden">
+      <main className="overflow-x-hidden">
         {/* Hero Section */}
         <section className="relative flex min-h-[95vh] items-center justify-center overflow-hidden pt-20 border-b border-border">
-          {/* Interactive Particles Background */}
+          {/* Interactive Antigravity Background */}
           <div className="absolute inset-0 z-0">
-            <Particles
-              particleColors={["#ffffff", "#6366f1", "#a855f7"]}
-              particleCount={100}
-              particleSpread={12}
-              speed={0.06}
-              particleBaseSize={120}
-              moveParticlesOnHover={true}
-              particleHoverFactor={1.5}
-              alphaParticles={false}
-              disableRotation={false}
+            <Antigravity
+              count={300}
+              magnetRadius={10}
+              ringRadius={10}
+              waveSpeed={0.4}
+              waveAmplitude={1}
+              particleSize={2}
+              lerpSpeed={0.1}
+              color="#6366f1"
+              autoAnimate={false}
+              particleVariance={1}
+              depthFactor={1}
+              particleShape="box"
+              fieldStrength={10}
             />
           </div>
 
@@ -133,7 +127,6 @@ function Home() {
           <div className="absolute bottom-0 left-0 right-0 h-40 z-[5] bg-gradient-to-t from-background to-transparent" />
 
           <motion.div 
-            style={{ y: yParallax, opacity: opacityFade }}
             className="relative z-10 mx-auto max-w-5xl px-6 text-center"
           >
             <motion.div
