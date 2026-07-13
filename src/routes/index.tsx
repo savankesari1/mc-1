@@ -4,7 +4,10 @@ import { ArrowRight, Sparkles, Shield, Download, PlayCircle, Code, Terminal, Zap
 
 import { Header } from "@/components/site/Header";
 import { Footer } from "@/components/site/Footer";
-import FloatingLines from "@/components/ui/FloatingLines";
+import { lazy, Suspense, useState, useEffect } from "react";
+
+// Lazy-load so Three.js never runs during SSR (fixes Vercel production)
+const FloatingLines = lazy(() => import("@/components/ui/FloatingLines"));
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -95,26 +98,33 @@ const itemVariants = {
 };
 
 function Home() {
+  const [isClient, setIsClient] = useState(false);
+  useEffect(() => { setIsClient(true); }, []);
+
   return (
     <div className="bg-background relative selection:bg-accent/30 selection:text-accent-foreground">
       <Header />
       <main className="overflow-x-hidden">
         {/* Hero Section */}
         <section className="relative flex min-h-[100svh] items-center justify-center overflow-hidden pt-16 border-b border-border">
-          {/* FloatingLines Interactive Background */}
-          <div className="absolute inset-0 z-0">
-            <FloatingLines
-              enabledWaves={['top', 'middle', 'bottom']}
-              lineCount={5}
-              lineDistance={4.5}
-              bendRadius={4.5}
-              bendStrength={-0.5}
-              interactive={true}
-              parallax={true}
-              animationSpeed={1}
-              mixBlendMode="screen"
-            />
-          </div>
+          {/* FloatingLines — client-only, safe for SSR */}
+          {isClient && (
+            <div className="absolute inset-0 z-0">
+              <Suspense fallback={null}>
+                <FloatingLines
+                  enabledWaves={['top', 'middle', 'bottom']}
+                  lineCount={5}
+                  lineDistance={4.5}
+                  bendRadius={4.5}
+                  bendStrength={-0.5}
+                  interactive={true}
+                  parallax={true}
+                  animationSpeed={1}
+                  mixBlendMode="screen"
+                />
+              </Suspense>
+            </div>
+          )}
 
           {/* Gradient overlays for readability */}
           <div className="absolute inset-0 z-[5] bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-transparent via-background/50 to-background/95 pointer-events-none" />
