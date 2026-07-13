@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect, lazy, Suspense } from "react";
+
+const ShapeGrid = lazy(() => import("@/components/ui/ShapeGrid"));
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -23,6 +25,9 @@ export const Route = createFileRoute("/_authenticated/dashboard")({
 });
 
 function Dashboard() {
+  const [isClient, setIsClient] = useState(false);
+  useEffect(() => { setIsClient(true); }, []);
+  
   const { isAdmin } = useUserRole();
 
   const { data: profile } = useQuery({
@@ -65,9 +70,27 @@ function Dashboard() {
   }
 
   return (
-    <>
-      <Header />
-      <main className="mx-auto max-w-6xl px-6 pt-32 pb-24 min-h-screen">
+    <div className="relative min-h-screen bg-background overflow-hidden">
+      {isClient && (
+        <div className="absolute inset-0 z-0 pointer-events-auto opacity-30">
+          <Suspense fallback={null}>
+            <ShapeGrid 
+              speed={0.38}
+              squareSize={40}
+              direction="diagonal"
+              borderColor="rgba(255, 255, 255, 0.15)"
+              hoverFillColor="rgba(255, 255, 255, 0.05)"
+              shape="hexagon"
+              hoverTrailAmount={5}
+            />
+          </Suspense>
+        </div>
+      )}
+      <div className="absolute inset-0 z-[1] bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-transparent via-background/60 to-background/95 pointer-events-none" />
+      
+      <div className="relative z-10">
+        <Header />
+        <main className="mx-auto max-w-6xl px-6 pt-32 pb-24 min-h-screen">
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
@@ -120,7 +143,8 @@ function Dashboard() {
         </section>
       </main>
       <Footer />
-    </>
+      </div>
+    </div>
   );
 }
 
